@@ -50,6 +50,20 @@ public class KubernetesDeployContextTest {
     }
 
     @Test
+    public void testWaitForResourceReadyTimeoutDefaultsToZeroAndNeverGoesNegative() {
+        KubernetesDeployContext context = new KubernetesDeployContext();
+        // The default must keep the historical behavior: no waiting.
+        assertEquals(0L, context.getWaitForResourceReadyTimeoutMillis());
+
+        context.setWaitForResourceReadyTimeoutMillis(600000L);
+        assertEquals(600000L, context.getWaitForResourceReadyTimeoutMillis());
+
+        // A negative value (for example an empty form submission) is normalized to zero.
+        context.setWaitForResourceReadyTimeoutMillis(-1L);
+        assertEquals(0L, context.getWaitForResourceReadyTimeoutMillis());
+    }
+
+    @Test
     public void testDockerCredentials() {
         KubernetesDeployContext context = new KubernetesDeployContext();
         assertListEquals(ImmutableList.of(), context.getDockerCredentials());

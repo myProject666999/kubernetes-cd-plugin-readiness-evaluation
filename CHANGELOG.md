@@ -1,5 +1,11 @@
 # Kubernetes Continuous Deploy Plugin Changelog
 
+## Unreleased
+* Add an optional `waitForResourceReadyTimeoutMillis` step option to wait for the applied resources
+  to become ready, with per-type readiness evaluation for Deployment, StatefulSet, DaemonSet, Job,
+  Pod, Namespace and write-only resources. Default `0` preserves the historical behavior; waiting is
+  skipped in delete mode.
+
 ## Version 2.3.1, 2020-10-27
 * Bump guava from 20.0 to 24.1.1-jre
 * Update maintainer

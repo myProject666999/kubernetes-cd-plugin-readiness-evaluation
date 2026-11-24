@@ -77,6 +77,12 @@ public class KubernetesDeployContext extends BaseCommandContext implements
 
     private boolean deleteResource;
 
+    /**
+     * Maximum time in milliseconds to wait for the applied resources to become ready.
+     * 0 means do not wait, which keeps the historical pipeline behavior.
+     */
+    private long waitForResourceReadyTimeoutMillis;
+
     @DataBoundConstructor
     public KubernetesDeployContext() {
         enableConfigSubstitution = true;
@@ -242,6 +248,16 @@ public class KubernetesDeployContext extends BaseCommandContext implements
     @DataBoundSetter
     public void setDeleteResource(boolean isDeleteResource) {
         this.deleteResource = isDeleteResource;
+    }
+
+    @Override
+    public long getWaitForResourceReadyTimeoutMillis() {
+        return waitForResourceReadyTimeoutMillis;
+    }
+
+    @DataBoundSetter
+    public void setWaitForResourceReadyTimeoutMillis(long waitForResourceReadyTimeoutMillis) {
+        this.waitForResourceReadyTimeoutMillis = Math.max(0L, waitForResourceReadyTimeoutMillis);
     }
 
     @Override
@@ -451,6 +467,10 @@ public class KubernetesDeployContext extends BaseCommandContext implements
 
         public boolean getDefaultEnableConfigSubstitution() {
             return true;
+        }
+
+        public long getDefaultWaitForResourceReadyTimeoutMillis() {
+            return 0L;
         }
 
         @Override

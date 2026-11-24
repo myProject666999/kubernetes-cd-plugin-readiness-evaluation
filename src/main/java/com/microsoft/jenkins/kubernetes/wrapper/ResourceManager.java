@@ -7,6 +7,7 @@
 package com.microsoft.jenkins.kubernetes.wrapper;
 
 import com.google.gson.JsonSyntaxException;
+import com.microsoft.jenkins.kubernetes.readiness.AppliedResource;
 import com.microsoft.jenkins.kubernetes.util.Constants;
 import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.models.V1ObjectMeta;
@@ -20,6 +21,8 @@ import org.slf4j.LoggerFactory;
 import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -31,6 +34,12 @@ public abstract class ResourceManager {
      */
     private static final Logger LOGGER = LoggerFactory.getLogger(ResourceManager.class);
     private final String pretty;
+
+    /**
+     * Resources applied through this manager, in application order. Each entry exposes a
+     * read-only view on {@link ResourceUpdater#getCurrentResource()} for the readiness wait loop.
+     */
+    private final List<AppliedResource> appliedResources = new ArrayList<>();
 
     ResourceManager(boolean pretty) {
         this.pretty = String.valueOf(pretty);
@@ -86,6 +95,17 @@ public abstract class ResourceManager {
         }
 
         /**
+         * Read-only entry over the package-private {@link #getCurrentResource()}: the readiness
+         * wait loop uses it to re-read the current object after the apply call. It performs no
+         * mutation on the cluster.
+         *
+         * @return the current object of the resource, or {@code null} if it is not found.
+         */
+        public final T readCurrentResource() {
+            return getCurrentResource();
+        }
+
+        /**
          * Explicitly apply the configuration if a resource with the same name exists in the namespace in the cluster,
          * or create one if not.
          */
@@ -101,6 +121,7 @@ public abstract class ResourceManager {
                 logCreated(updated);
             }
             notifyUpdate(original, updated);
+            registerAppliedResource(this);
         }
 
         final void delete() {
@@ -155,6 +176,26 @@ public abstract class ResourceManager {
 
     public PrintStream getConsoleLogger() {
         return consoleLogger;
+    }
+
+    /**
+     * @return the resources applied through this manager since its creation, in application order.
+     */
+    public List<AppliedResource> getAppliedResources() {
+        return appliedResources;
+    }
+
+    private void registerAppliedResource(final ResourceUpdater updater) {
+        appliedResources.add(new AppliedResource(
+                updater.getKind(),
+                updater.getNamespace(),
+                updater.getName(),
+                new java.util.function.Supplier<Object>() {
+                    @Override
+                    public Object get() {
+                        return updater.readCurrentResource();
+                    }
+                }));
     }
 
 

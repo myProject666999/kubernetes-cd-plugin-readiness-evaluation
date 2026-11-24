@@ -64,6 +64,7 @@ public class DeploymentCommand implements ICommand<DeploymentCommand.IDeployment
             task.setEnableSubstitution(context.isEnableConfigSubstitution());
             task.setDockerRegistryEndpoints(context.resolveEndpoints(jobContext.getRun().getParent()));
             task.setDeleteResource(context.isDeleteResource());
+            task.setWaitForResourceReadyTimeoutMillis(context.getWaitForResourceReadyTimeoutMillis());
 
             taskResult = workspace.act(task);
 
@@ -115,6 +116,11 @@ public class DeploymentCommand implements ICommand<DeploymentCommand.IDeployment
         private String defaultSecretNameSeed;
         private boolean enableSubstitution;
         private boolean deleteResource;
+        /**
+         * Upper bound of the post-apply readiness wait in milliseconds. 0 means do not wait,
+         * which keeps the historical pipeline behavior.
+         */
+        private long waitForResourceReadyTimeoutMillis;
 
         private List<ResolvedDockerRegistryEndpoint> dockerRegistryEndpoints;
 
@@ -171,6 +177,9 @@ public class DeploymentCommand implements ICommand<DeploymentCommand.IDeployment
 
             wrapper.apply(configFiles);
 
+            // Thin polling loop on top of the per-type readiness evaluators. Delete mode and a
+            // zero timeout skip the wait, preserving the historical write-and-succeed behavior.
+            wrapper.waitForAppliedResources(waitForResourceReadyTimeoutMillis);
 
             result.commandState = CommandState.Success;
 
@@ -219,6 +228,10 @@ public class DeploymentCommand implements ICommand<DeploymentCommand.IDeployment
         public void setDeleteResource(boolean isDeleteResource) {
             this.deleteResource = isDeleteResource;
         }
+
+        public void setWaitForResourceReadyTimeoutMillis(long waitForResourceReadyTimeoutMillis) {
+            this.waitForResourceReadyTimeoutMillis = waitForResourceReadyTimeoutMillis;
+        }
     }
 
     public static class TaskResult implements Serializable {
@@ -243,5 +256,11 @@ public class DeploymentCommand implements ICommand<DeploymentCommand.IDeployment
         boolean isEnableConfigSubstitution();
 
         boolean isDeleteResource();
+
+        /**
+         * @return maximum time in milliseconds to wait for applied resources to become ready;
+         * {@code 0} means do not wait.
+         */
+        long getWaitForResourceReadyTimeoutMillis();
     }
 }

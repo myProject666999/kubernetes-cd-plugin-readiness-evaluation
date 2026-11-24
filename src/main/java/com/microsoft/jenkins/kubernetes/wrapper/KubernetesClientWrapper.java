@@ -7,6 +7,8 @@
 package com.microsoft.jenkins.kubernetes.wrapper;
 
 import com.microsoft.jenkins.kubernetes.credentials.ResolvedDockerRegistryEndpoint;
+import com.microsoft.jenkins.kubernetes.readiness.AppliedResource;
+import com.microsoft.jenkins.kubernetes.readiness.ResourceReadinessWaiter;
 import com.microsoft.jenkins.kubernetes.util.CommonUtils;
 import com.microsoft.jenkins.kubernetes.util.Constants;
 import com.microsoft.jenkins.kubernetes.util.DockerConfigBuilder;
@@ -55,6 +57,13 @@ public class KubernetesClientWrapper {
     private VariableResolver<String> variableResolver;
 
     private boolean deleteResource;
+
+    /**
+     * Resources applied during the current {@link #apply(FilePath[])} run, in application order.
+     * A new manager is constructed per resource, so the applied resources have to be collected here
+     * after each apply call instead of being read from a single manager.
+     */
+    private final List<AppliedResource> appliedResources = new ArrayList<>();
 
 
     private static Map<String, String> apiGroups = new HashMap<>();
@@ -259,6 +268,25 @@ public class KubernetesClientWrapper {
     }
 
     /**
+     * Block until every resource applied in the preceding {@link #apply(FilePath[])} run becomes
+     * ready, one of them reaches a terminal failure, or {@code waitTimeoutMillis} elapses.
+     * <p>
+     * A timeout of {@code 0} (or a negative value) skips the wait entirely, which preserves the
+     * historical behavior where a successful write is treated as success. The wait is also skipped
+     * in delete mode.
+     *
+     * @param waitTimeoutMillis maximum time to wait for all applied resources, in milliseconds;
+     *                          {@code 0} means do not wait
+     * @throws InterruptedException if the waiting thread is interrupted
+     */
+    public void waitForAppliedResources(long waitTimeoutMillis) throws InterruptedException {
+        if (deleteResource || waitTimeoutMillis <= 0 || appliedResources.isEmpty()) {
+            return;
+        }
+        new ResourceReadinessWaiter(waitTimeoutMillis, getLogger()).waitUntilReady(appliedResources);
+    }
+
+    /**
      * Get related updater in{@link ResourceUpdaterMap} by resource's class type and handle the resource by updater.
      *
      * @param resource k8s resource
@@ -268,6 +296,7 @@ public class KubernetesClientWrapper {
                 Class<? extends ResourceManager.ResourceUpdater>> updaterPair =
                 ResourceUpdaterMap.getUnmodifiableInstance().get(resource.getClass());
         ResourceManager.ResourceUpdater updater = null;
+        ResourceManager resourceManager = null;
         if (updaterPair != null) {
             try {
                 Constructor constructor = updaterPair.
@@ -275,7 +304,7 @@ public class KubernetesClientWrapper {
                         updaterPair.getLeft(), resource.getClass());
                 Constructor resourceManagerConstructor = updaterPair.getLeft()
                         .getConstructor(ApiClient.class);
-                ResourceManager resourceManager = (ResourceManager) resourceManagerConstructor.
+                resourceManager = (ResourceManager) resourceManagerConstructor.
                         newInstance(getClient());
                 resourceManager.setConsoleLogger(getLogger());
                 updater = (ResourceManager.ResourceUpdater) constructor
@@ -287,6 +316,7 @@ public class KubernetesClientWrapper {
 
             if (updater != null && !deleteResource) {
                 updater.createOrApply();
+                appliedResources.addAll(resourceManager.getAppliedResources());
             } else if (updater != null && deleteResource) {
                 updater.delete();
             } else {

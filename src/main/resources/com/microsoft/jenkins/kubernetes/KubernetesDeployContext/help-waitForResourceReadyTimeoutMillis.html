@@ -1,0 +1,17 @@
+<div>
+    <p>
+        Maximum time in milliseconds to wait for the applied resources to become ready after they
+        are written to the cluster.
+    </p>
+    <p>
+        The default value <code>0</code> means no waiting at all: the step succeeds as soon as the
+        write API calls succeed, which is the historical behavior. Set it to a positive value to
+        make the step poll the resource statuses and fail the build when a resource does not become
+        ready in time, or reaches a terminal failure (for example a Job with the
+        <code>BackoffLimitExceeded</code> condition, or a Deployment with
+        <code>ProgressDeadlineExceeded</code>).
+    </p>
+    <p>
+        The waiting is skipped entirely when the delete option is enabled.
+    </p>
+</div>

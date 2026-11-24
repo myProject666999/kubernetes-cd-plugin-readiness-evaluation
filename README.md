@@ -116,6 +116,72 @@ The following resource types are supported by the plugin:
 In the context of continuous integration & continuous deployment, only those resources that need to be updated
 regularly should be placed in Jenkins deployment. So most of the time the plugin should mainly deal with resources of type **Deployment**.
 
+## Wait for Resource Readiness
+
+By default the step finishes as soon as the resource manifests are accepted by the API server, which is the
+historical behavior. Set the **Wait for Resources Ready Timeout (ms)** option
+(`waitForResourceReadyTimeoutMillis`, also available in Pipeline) to a positive value to make the step poll the
+applied resources after the write phase and fail the build when they do not become ready before the deadline.
+The value `0` means no waiting at all. The waiting is skipped when the delete option is enabled.
+
+The post-apply wait is a thin polling loop with one shared deadline: every round only the resources that were
+not ready in the previous round are re-read, and a resource that has reached a terminal failure ends the wait
+immediately instead of waiting for the timeout. On timeout or terminal failure the build log lists every
+unfinished resource in application order with its kind, `namespace/name` and the reason, for example:
+
+```
+Timed out after 600000 ms waiting for the applied resources to become ready:
+Deployment default/web: updated 2 of 3 desired, total 3, available 1 of 3 desired
+Job batch/migrate: BackoffLimitExceeded: Job has reached the specified backoff limit
+```
+
+### Readiness rules
+
+The readiness evaluation is pure logic: it takes the current object of a resource and returns one of three
+states — ready, not ready (with a reason), or deterministically failed (with a reason).
+
+* **Deployment (apps/v1)**: ready when `status.observedGeneration >= metadata.generation` and
+  `status.updatedReplicas`, `status.replicas` and `status.availableReplicas` all equal `spec.replicas`.
+  An unset `spec.replicas` counts as 1; an explicit `0` is considered ready immediately. A `Progressing`
+  condition with status `False` and reason `ProgressDeadlineExceeded` is a terminal failure.
+* **StatefulSet (apps/v1)**: ready when `readyReplicas` and `updatedReplicas` equal the desired replicas and
+  `status.currentRevision` equals `status.updateRevision` (in addition to the observed-generation check).
+* **DaemonSet (apps/v1)**: ready when `updatedNumberScheduled` and `numberAvailable` equal
+  `desiredNumberScheduled` (in addition to the observed-generation check).
+* **Job (batch/v1)**: ready when the `Complete` condition is `True`; the `Failed` condition being `True` is a
+  terminal failure and the condition's `reason` and `message` (for example `BackoffLimitExceeded`) are reported.
+* **Pod (v1)**: ready when the `Ready` condition is `True` or the phase is `Succeeded`. When the phase is
+  `Pending` and the `PodScheduled` condition is `False` with reason `Unschedulable`, the condition message is
+  reported verbatim as the not-ready reason (this surfaces problems like insufficient CPU or memory).
+* **Namespace (v1)**: ready when `status.phase` is `Active`.
+* **ConfigMap, Secret, ServiceAccount and the RBAC resources** (Role, RoleBinding, ClusterRole,
+  ClusterRoleBinding): a successful write is treated as readiness — their objects carry no readiness status.
+
+### Resource types not evaluated
+
+**Service** and **HorizontalPodAutoscaler** are deliberately not included in the readiness evaluation: their
+status objects do not expose a workload-style readiness signal that would make a deployment step fail
+meaningfully, so a successful write keeps being treated as readiness for them. The same applies to
+ReplicaSet, ReplicationController, Ingress, CronJob, NetworkPolicy, PersistentVolume and
+PersistentVolumeClaim. This decision can be revisited without changing the wait loop, by extending the
+evaluators only.
+
+### Legacy v1beta1 / v1beta2 workloads
+
+The legacy model classes were inspected before deciding whether the v1 rules can be reused. They expose the
+same status fields, so the same rule set is applied:
+
+* `V1beta2Deployment`, `ExtensionsV1beta1Deployment` and `AppsV1beta1Deployment` all carry
+  `observedGeneration`, `updatedReplicas`, `replicas`, `availableReplicas` and a conditions list with the same
+  `type/status/reason/message` shape — the Deployment rules, including `ProgressDeadlineExceeded`, apply as-is.
+* `V1beta2StatefulSet` and `V1beta1StatefulSet` both carry `readyReplicas`, `updatedReplicas`,
+  `currentRevision` and `updateRevision` — the StatefulSet rules apply as-is.
+* `V1beta2DaemonSet` and `V1beta1DaemonSet` both carry `updatedNumberScheduled`, `numberAvailable` and
+  `desiredNumberScheduled` — the DaemonSet rules apply as-is.
+
+Legacy ReplicaSet, Ingress and CronJob models have no v1 counterpart in the rules above and no equivalent
+terminal-failure condition, so they keep the historical write-and-succeed behavior.
+
 ## Pipeline Support
 
 The kubernetes-cd plugin provides function `kubernetesDeploy` for [Jenkins Pipeline](https://jenkins.io/doc/book/pipeline/)
@@ -132,6 +198,7 @@ kubernetesDeploy(kubeconfigId: 'kubeconfig-credentials-id',               // REQ
 
                  secretNamespace: '<secret-namespace>',
                  secretName: '<secret-name>',
+                 waitForResourceReadyTimeoutMillis: 600000,               // optional, 0 = do not wait
                  dockerCredentials: [
                         [credentialsId: '<credentials-id-for-docker-hub>'],
                         [credentialsId: '<credentials-id-for-other-private-registry>', url: '<registry-url>'],
